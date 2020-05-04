@@ -862,14 +862,6 @@ void IRGeneratorForStatements::endVisit(FunctionCall const& _functionCall)
 			"))\n";
 		break;
 	}
-	case FunctionType::Kind::ECRecover:
-	case FunctionType::Kind::SHA256:
-	case FunctionType::Kind::RIPEMD160:
-	{
-		solAssert(!_functionCall.annotation().tryCall, "");
-		appendExternalFunctionCall(_functionCall, arguments);
-		break;
-	}
 	case FunctionType::Kind::ArrayPop:
 	{
 		auto const& memberAccessExpression = dynamic_cast<MemberAccess const&>(_functionCall.expression()).expression();
@@ -1059,6 +1051,72 @@ void IRGeneratorForStatements::endVisit(FunctionCall const& _functionCall)
 			templ("success", IRVariable(_functionCall).commaSeparatedList());
 		templ("isTransfer", functionType->kind() == FunctionType::Kind::Transfer);
 		templ("forwardingRevert", m_utils.forwardingRevertFunction());
+		m_code << templ.render();
+
+		break;
+	}
+	case FunctionType::Kind::ECRecover:
+	case FunctionType::Kind::RIPEMD160:
+	case FunctionType::Kind::SHA256:
+	{
+		solAssert(!_functionCall.annotation().tryCall, "");
+		solAssert(!functionType->valueSet(), "");
+		solAssert(!functionType->gasSet(), "");
+		solAssert(!functionType->bound(), "");
+
+		static map<FunctionType::Kind, std::tuple<u160, size_t>> precompiles = {
+			{FunctionType::Kind::ECRecover, std::make_tuple(1, 0)},
+			{FunctionType::Kind::SHA256, std::make_tuple(2, 0)},
+			{FunctionType::Kind::RIPEMD160, std::make_tuple(3, 12)},
+		};
+		auto [ address, offset ] = precompiles[functionType->kind()];
+		TypePointers argumentTypes;
+		vector<string> argumentStrings;
+		for (auto const& arg: arguments)
+			argumentTypes.emplace_back(&type(*arg));
+		for (auto const& arg: arguments | boost::adaptors::reversed)
+			if (IRVariable(*arg).type().sizeOnStack() > 0)
+				argumentStrings.emplace_back(IRVariable(*arg).commaSeparatedList());
+		string argumentString = argumentStrings.empty() ? ""s : (", " + joinHumanReadable(argumentStrings));
+		ABIFunctions abi(m_context.evmVersion(), m_context.revertStrings(), m_context.functionCollector());
+		Whiskers templ(R"(
+			let <pos> := <freeMemory>
+			let <end> := <encodeArgs>(<pos> <argumentString>)
+
+			<?isECRecover>
+				mstore(0, 0)
+			</isECRecover>
+
+			let <success> := <call>(<gas>, <address> <?isCall>, 0</isCall>, <pos>, sub(<end>, <pos>), 0, 32)
+			if iszero(<success>) { <forwardingRevert>() }
+			let <retVars> := <shl>(mload(0))
+		)");
+		templ("call", m_context.evmVersion().hasStaticCall() ? "staticcall" : "call");
+		templ("isCall", !m_context.evmVersion().hasStaticCall());
+		templ("shl", m_utils.shiftLeftFunction(offset * 8));
+		templ("freeMemory", freeMemory());
+		templ("pos", m_context.newYulVariable());
+		templ("end", m_context.newYulVariable());
+		templ("isECRecover", FunctionType::Kind::ECRecover == functionType->kind());
+		if (FunctionType::Kind::ECRecover == functionType->kind())
+			templ("encodeArgs", abi.tupleEncoder(argumentTypes, parameterTypes));
+		else
+			templ("encodeArgs", abi.tupleEncoderPacked(argumentTypes, parameterTypes));
+		templ("argumentString", argumentString);
+		templ("address", toString(address));
+		templ("success", m_context.newYulVariable());
+		templ("retVars", IRVariable(_functionCall).commaSeparatedList());
+		templ("forwardingRevert", m_utils.forwardingRevertFunction());
+		if (m_context.evmVersion().canOverchargeGasForCall())
+			// Send all gas (requires tangerine whistle EVM)
+			templ("gas", "gas()");
+		else
+		{
+			u256 gasNeededByCaller = evmasm::GasCosts::callGas(m_context.evmVersion()) + 10 +
+										evmasm::GasCosts::callNewAccountGas;
+			templ("gas", "sub(gas(), " + formatNumber(gasNeededByCaller) + ")");
+		}
+
 		m_code << templ.render();
 
 		break;
@@ -1685,8 +1743,6 @@ void IRGeneratorForStatements::appendExternalFunctionCall(
 	}
 	string argumentString = argumentStrings.empty() ? ""s : (", " + joinHumanReadable(argumentStrings));
 
-	solUnimplementedAssert(funKind != FunctionType::Kind::ECRecover, "");
-
 	if (!m_context.evmVersion().canOverchargeGasForCall())
 	{
 		// Touch the end of the output area so that we do not pay for memory resize during the call
@@ -1750,14 +1806,7 @@ void IRGeneratorForStatements::appendExternalFunctionCall(
 	if (!funType.isBareCall())
 		templ("funId", IRVariable(_functionCall.expression()).part("functionIdentifier").name());
 
-	if (funKind == FunctionType::Kind::ECRecover)
-		templ("address", "1");
-	else if (funKind == FunctionType::Kind::SHA256)
-		templ("address", "2");
-	else if (funKind == FunctionType::Kind::RIPEMD160)
-		templ("address", "3");
-	else
-		templ("address", IRVariable(_functionCall.expression()).part("address").name());
+	templ("address", IRVariable(_functionCall.expression()).part("address").name());
 
 	// Always use the actual return length, and not our calculated expected length, if returndatacopy is supported.
 	// This ensures it can catch badly formatted input from external calls.
@@ -1784,10 +1833,6 @@ void IRGeneratorForStatements::appendExternalFunctionCall(
 	// Move arguments to memory, will not update the free memory pointer (but will update the memory
 	// pointer on the stack).
 	bool encodeInPlace = funType.takesArbitraryParameters() || funType.isBareCall();
-	if (funType.kind() == FunctionType::Kind::ECRecover)
-		// This would be the only combination of padding and in-place encoding,
-		// but all parameters of ecrecover are value types anyway.
-		encodeInPlace = false;
 	bool encodeForLibraryCall = funKind == FunctionType::Kind::DelegateCall;
 
 	solUnimplementedAssert(encodeInPlace == !funType.padArguments(), "");
@@ -1799,10 +1844,6 @@ void IRGeneratorForStatements::appendExternalFunctionCall(
 	else
 		templ("encodeArgs", abi.tupleEncoder(argumentTypes, funType.parameterTypes(), encodeForLibraryCall));
 	templ("argumentString", argumentString);
-
-	// Output data will replace input data, unless we have ECRecover (then, output
-	// area will be 32 bytes just before input area).
-	solUnimplementedAssert(funKind != FunctionType::Kind::ECRecover, "");
 
 	solAssert(!isDelegateCall || !funType.valueSet(), "Value set for delegatecall");
 	solAssert(!useStaticCall || !funType.valueSet(), "Value set for staticcall");
@@ -1839,9 +1880,6 @@ void IRGeneratorForStatements::appendExternalFunctionCall(
 		templ("call", "call");
 
 	templ("forwardingRevert", m_utils.forwardingRevertFunction());
-
-	solUnimplementedAssert(funKind != FunctionType::Kind::RIPEMD160, "");
-	solUnimplementedAssert(funKind != FunctionType::Kind::ECRecover, "");
 
 	m_code << templ.render();
 }
