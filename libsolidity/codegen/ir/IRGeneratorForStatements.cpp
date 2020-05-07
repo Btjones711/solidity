@@ -478,8 +478,15 @@ bool IRGeneratorForStatements::visit(BinaryOperation const& _binOp)
 	}
 
 	if (commonType->category() == Type::Category::RationalNumber)
+	{
 		define(_binOp) << toCompactHexWithPrefix(commonType->literalValue(nullptr)) << "\n";
-	else if (TokenTraits::isCompareOp(op))
+		return false; // skip sub-expressions
+	}
+
+	_binOp.leftExpression().accept(*this);
+	_binOp.rightExpression().accept(*this);
+
+	if (TokenTraits::isCompareOp(op))
 	{
 		if (auto type = dynamic_cast<FunctionType const*>(commonType))
 		{
