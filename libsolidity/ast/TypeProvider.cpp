@@ -556,7 +556,13 @@ MagicType const* TypeProvider::magic(MagicType::Kind _kind)
 
 MagicType const* TypeProvider::meta(Type const* _type)
 {
-	solAssert(_type && _type->category() == Type::Category::Contract, "Only contracts supported for now.");
+	solAssert(
+		_type && (
+			_type->category() == Type::Category::Contract ||
+			_type->category() == Type::Category::Integer
+		),
+		"Only contracts supported for now."
+	);
 	return createAndGet<MagicType>(_type);
 }
 

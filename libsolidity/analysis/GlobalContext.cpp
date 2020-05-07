@@ -100,11 +100,12 @@ inline vector<shared_ptr<MagicVariableDeclaration const>> constructMagicVariable
 		magicVarDecl("sha3", TypeProvider::function(strings{"bytes memory"}, strings{"bytes32"}, FunctionType::Kind::KECCAK256, false, StateMutability::Pure)),
 		magicVarDecl("suicide", TypeProvider::function(strings{"address payable"}, strings{}, FunctionType::Kind::Selfdestruct)),
 		magicVarDecl("tx", TypeProvider::magic(MagicType::Kind::Transaction)),
-		magicVarDecl("type", TypeProvider::function(
-			strings{"address"} /* accepts any contract type, handled by the type checker */,
+		magicVarDecl("type", TypeProvider::function( // TODO Is it possible to make this function not a "arbitrary parameters" one?
+			strings{} /* accepts a MagicType that can be any contract type or an
+						Integer type, handled by the type checker */,
 			strings{} /* returns a MagicType, handled by the type checker */,
 			FunctionType::Kind::MetaType,
-			false,
+			true,
 			StateMutability::Pure
 		)),
 	};

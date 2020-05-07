@@ -1175,6 +1175,27 @@ void IRGeneratorForStatements::endVisit(MemberAccess const& _memberAccess)
 				result ^= fromBigEndian<uint64_t>(function.first.ref());
 			define(_memberAccess) << formatNumber(u256{result} << (256 - 32)) << "\n";
 		}
+		else if (member == "min" || member == "max")
+		{
+			MagicType const* arg = dynamic_cast<MagicType const*>(_memberAccess.expression().annotation().type);
+			IntegerType const* integerType = dynamic_cast<IntegerType const*>(arg->typeArgument());
+			u256 min, max;
+			if (integerType->isSigned())
+			{
+				min = s2u(s256(integerType->minValue()));
+				max = s2u(s256(integerType->maxValue()));
+			}
+			else
+			{
+				min = u256(integerType->minValue());
+				max = u256(integerType->maxValue());
+			}
+
+			if (member == "min")
+				define(_memberAccess) << formatNumber(min) << "\n";
+			else
+				define(_memberAccess) << formatNumber(max) << "\n";
+		}
 		else if (set<string>{"encode", "encodePacked", "encodeWithSelector", "encodeWithSignature", "decode"}.count(member))
 		{
 			// no-op
