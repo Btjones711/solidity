@@ -477,9 +477,6 @@ bool IRGeneratorForStatements::visit(BinaryOperation const& _binOp)
 		return false;
 	}
 
-	_binOp.leftExpression().accept(*this);
-	_binOp.rightExpression().accept(*this);
-
 	if (commonType->category() == Type::Category::RationalNumber)
 		define(_binOp) << toCompactHexWithPrefix(commonType->literalValue(nullptr)) << "\n";
 	else if (TokenTraits::isCompareOp(op))
