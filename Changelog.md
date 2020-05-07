@@ -12,6 +12,7 @@ Bugfixes:
  * ABI: Skip ``private`` or ``internal`` constructors.
  * Type Checker: Disallow accessing ``runtimeCode`` for contract types that contain immutable state variables.
  * Fixed an "Assembly Exception in Bytecode" error where requested functions were generated twice.
+ * Fixed that string literals passed to internal functions where not properly escaped.
 
 
 

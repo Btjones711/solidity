@@ -188,5 +188,14 @@ string solidity::util::formatAsStringOrNumber(string const& _value)
 		if (c <= 0x1f || c >= 0x7f || c == '"')
 			return "0x" + h256(_value, h256::AlignLeft).hex();
 
-	return "\"" + _value + "\"";
+	std::string returnValue = "\"" + _value + "\"";
+
+	for (string::iterator it = returnValue.begin(); it != returnValue.end(); it++)
+		if (*it == '\\')
+		{
+			it = returnValue.insert(it, '\\');
+			it++;
+		}
+
+	return returnValue;
 }
